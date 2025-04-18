@@ -89,7 +89,7 @@ func (cbfs *ClusterBFS) FrontierFunc(v int) {
 	// S1[v] = all seeds that tried to reach v in this round
 	// S0[v] = all seeds that had already reached v before this round
 	// So difference = new seeds that just reached v this round
-	difference := cbfs.S1[v] &^ cbfs.S0[v]
+	difference := cbfs.S1[v] &^ cbfs.S0[v] // AND NOT
 
 	// If this is the first time v has been visited, set its BFS round (D[v])
 	if cbfs.D[v] == cbfs.INF {
@@ -107,7 +107,7 @@ func (cbfs *ClusterBFS) FrontierFunc(v int) {
 // CondFunc: decides which vertices should be considered for updates in the current BFS round
 // Returns true if:
 // Vertices that haven’t been visited yet (D[v] == INF)
-// Or were recently visited and still within the radius R
+// Or were recently visited and cbfs.round-cbfs.D[v] is still within the radius R from previous seeds
 func (cbfs *ClusterBFS) CondFunc(v int, round uint64) bool {
 	return cbfs.D[v] == cbfs.INF || (cbfs.round-cbfs.D[v]) < uint64(cbfs.R) // atomic version: dv := atomic.LoadUint64(&D[v])
 }
