@@ -3,6 +3,7 @@ package main
 // analogue to Parlay's parallel loops
 import (
 	"sync"
+	"runtime"
 )
 
 // ----------------------------------------------------
@@ -154,23 +155,42 @@ type EdgeMap[E any] struct {
 
 // NewEdgeMap constructs a new EdgeMap. It computes n (number of vertices)
 // and m (total number of edges) from the input graph G.
-func NewEdgeMap[E any](G, GT [][]E, fa func(u, v int, e E, backwards bool) bool,
-	cond func(v int) bool, get func(e E) int) *EdgeMap[E] {
-	n := len(G)
-	m := 0
-	for _, edges := range G {
-		m += len(edges)
-	}
-	return &EdgeMap[E]{
-		n:    n,
-		m:    m,
-		fa:   fa,
-		get:  get,
-		cond: cond,
-		G:    G,
-		GT:   GT,
-	}
+func NewEdgeMap[E any](G, GT [][]E,
+    fa func(u, v int, e E, backwards bool) bool,
+    cond func(v int) bool,
+    get func(e E) int) *EdgeMap[E] {
+    n := len(G)
+    m := 0
+    var wg sync.WaitGroup
+    ch := make(chan int, n)
+
+    // parallel compute total edges m
+    for _, edges := range G {
+        wg.Add(1)
+        go func(es []E) {
+            defer wg.Done()
+            ch <- len(es)
+        }(edges)
+    }
+    go func() {
+        wg.Wait()
+        close(ch)
+    }()
+    for cnt := range ch {
+        m += cnt
+    }
+
+    return &EdgeMap[E]{
+        n:    n,
+        m:    m,
+        fa:   fa,
+        get:  get,
+        cond: cond,
+        G:    G,
+        GT:   GT,
+    }
 }
+
 
 // f is a wrapper that calls the user-provided function fa with four arguments.
 // In the original C++ code, a compile-time conditional was used to adjust parameters,
@@ -185,16 +205,37 @@ func (em *EdgeMap[E]) f(u, v int, e E, backwards bool) bool {
 // it extracts the target vertex v = get(e), tests cond(v),
 // and if em.f(u,v,e,false) returns true, it includes v in the result.
 func (em *EdgeMap[E]) edgeMapSparse(vertices []int) []int {
-	var res []int
-	for _, u := range vertices {
-		for _, e := range em.G[u] {
-			v := em.get(e)
-			if em.cond(v) && em.f(u, v, e, false) {
-				res = append(res, v)
-			}
-		}
-	}
-	return res
+	var wg sync.WaitGroup
+    out := make(chan int)
+    
+    // aggregator
+    var res []int
+    aggWg := sync.WaitGroup{}
+    aggWg.Add(1)
+    go func() {
+        defer aggWg.Done()
+        for v := range out {
+            res = append(res, v)
+        }
+    }()
+
+    // worker per source vertex
+    for _, u := range vertices {
+        wg.Add(1)
+        go func(u int) {
+            defer wg.Done()
+            for _, e := range em.G[u] {
+                v := em.get(e)
+                if em.cond(v) && em.f(u, v, e, false) {
+                    out <- v
+                }
+            }
+        }(u)
+    }
+    wg.Wait()
+    close(out)
+    aggWg.Wait()
+    return res
 }
 
 // edgeMapDense implements the dense edge_map.
@@ -204,79 +245,127 @@ func (em *EdgeMap[E]) edgeMapSparse(vertices []int) []int {
 // aggregates over all edges using a logical OR.
 func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
 	result := make([]bool, em.n)
-	for v := 0; v < em.n; v++ {
-		if em.cond(v) {
-			if exitEarly {
-				found := false
-				for _, e := range em.GT[v] {
-					// Although the original C++ code includes a redundant cond check here,
-					// we continue to process the edge.
-					u := em.get(e)
-					if vertices[u] && em.f(u, v, e, true) && !found {
-						found = true
-					}
-				}
-				result[v] = found
-			} else {
-				res := false
-				for _, e := range em.GT[v] {
-					u := em.get(e)
-					res = res || (vertices[u] && em.f(u, v, e, true))
-				}
-				result[v] = res
-			}
-		} else {
-			result[v] = false
-		}
-	}
-	return result
+    var wg sync.WaitGroup
+
+    for v := 0; v < em.n; v++ {
+        wg.Add(1)
+        go func(v int) {
+            defer wg.Done()
+            if !em.cond(v) {
+                result[v] = false
+                return
+            }
+            if exitEarly {
+                found := false
+                for _, e := range em.GT[v] {
+                    u := em.get(e)
+                    if vertices[u] && em.f(u, v, e, true) {
+                        found = true
+                        break
+                    }
+                }
+                result[v] = found
+            } else {
+                resFlag := false
+                for _, e := range em.GT[v] {
+                    u := em.get(e)
+                    if vertices[u] && em.f(u, v, e, true) {
+                        resFlag = true
+                        break
+                    }
+                }
+                result[v] = resFlag
+            }
+        }(v)
+    }
+    wg.Wait()
+    return result
 }
 
 // countTrue is a helper that counts how many elements in a bool slice are true.
 func countTrue(b []bool) int {
-	count := 0
-	for _, v := range b {
-		if v {
-			count++
-		}
-	}
-	return count
+	n := len(b)
+    workers := runtime.NumCPU()
+    chunk := (n + workers - 1) / workers
+    var wg sync.WaitGroup
+    ch := make(chan int, workers)
+
+    for i := 0; i < n; i += chunk {
+        end := i + chunk
+        if end > n {
+            end = n
+        }
+        wg.Add(1)
+        go func(slice []bool) {
+            defer wg.Done()
+            cnt := 0
+            for _, v := range slice {
+                if v {
+                    cnt++
+                }
+            }
+            ch <- cnt
+        }(b[i:end])
+    }
+    wg.Wait()
+    close(ch)
+
+    total := 0
+    for c := range ch {
+        total += c
+    }
+    return total
 }
 
 // Run is analogous to the overloaded operator() in the C++ code.
 // It decides whether to use the sparse or dense method based on the size
 // of the input vertex subset and then returns a new VertexSubset as result.
 func (em *EdgeMap[E]) Run(vs VertexSubset, exitEarly bool) VertexSubset {
-	var l int
-	if vs.isSparse {
-		l = vs.Size()
-	} else {
-		l = countTrue(vs.dense)
-	}
-	if vs.isSparse {
-		// Compute the total number of edges incident on the sparse subset.
-		d := 0
-		for _, v := range vs.sparse {
-			d += len(em.G[v])
-		}
-		// If the combined cost is greater than m/10, switch to dense.
-		if (l + d) > em.m/10 {
-			dVertices := make([]bool, em.n)
-			for _, i := range vs.sparse {
-				dVertices[i] = true
-			}
-			newDense := em.edgeMapDense(dVertices, exitEarly)
-			return NewDense(newDense)
-		}
-		newSparse := em.edgeMapSparse(vs.sparse)
-		return NewSparse(newSparse)
-	} else {
-		if l > em.n/20 {
-			newDense := em.edgeMapDense(vs.dense, exitEarly)
-			return NewDense(newDense)
-		}
-		// If the dense set is too small, convert to a sparse list.
-		newSparse := em.edgeMapSparse(vs.ToSeq())
-		return NewSparse(newSparse)
-	}
+	// parallel count of active vertices
+    var activeCount int
+    if vs.isSparse {
+        activeCount = len(vs.sparse)
+    } else {
+        activeCount = countTrue(vs.dense)
+    }
+
+    if vs.isSparse {
+        // parallel compute incident edges count
+        var wg sync.WaitGroup
+        ch := make(chan int, len(vs.sparse))
+        for _, v := range vs.sparse {
+            wg.Add(1)
+            go func(v int) {
+                defer wg.Done()
+                ch <- len(em.G[v])
+            }(v)
+        }
+        go func() {
+            wg.Wait()
+            close(ch)
+        }()
+        d := 0
+        for cnt := range ch {
+            d += cnt
+        }
+        if (activeCount + d) > em.m/10 {
+            dVertices := make([]bool, em.n)
+            for _, i := range vs.sparse {
+                dVertices[i] = true
+            }
+            newDense := em.edgeMapDense(dVertices, exitEarly)
+            return NewDense(newDense)
+        }
+        newSparse := em.edgeMapSparse(vs.sparse)
+        return NewSparse(newSparse)
+    } else {
+        if activeCount > em.n/20 {
+            newDense := em.edgeMapDense(vs.dense, exitEarly)
+            return NewDense(newDense)
+        }
+        seq := vs.ToSeq()
+        newSparse := em.edgeMapSparse(seq)
+        return NewSparse(newSparse)
+    }
 }
+
