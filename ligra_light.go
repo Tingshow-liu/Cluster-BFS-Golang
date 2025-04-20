@@ -3,6 +3,7 @@ package main
 // analogue to Parlay's parallel loops
 import (
 	"sync"
+	"sync/atomic"
 	"runtime"
 )
 
@@ -125,6 +126,7 @@ func (vs *VertexSubset) Apply(f func(int)) {
 func Identity[T any](x T) T {
 	return x
 }
+// func IdentityGet[E any](e E) int { return e.(int) }
 
 // ----------------------------------------------------
 // EdgeMap: implements an edge mapping similar to the Ligra
@@ -144,8 +146,8 @@ func Identity[T any](x T) T {
 // EdgeMap represents the edge mapping structure.
 // Here E is the edge type, and we assume vertices are int.
 type EdgeMap[E any] struct {
-	n    int                                      // number of vertices in the graph
-	m    int                                      // total number of edges in the graph
+	n    int                                      // number of vertices
+	m    int64                                    // total edges (64-bit for atomic ops)
 	fa   func(u, v int, e E, backwards bool) bool // processing function for each edge
 	get  func(e E) int                            // extracts a vertex from an edge; identity by default
 	cond func(v int) bool                         // condition to test if vertex v qualifies
@@ -160,25 +162,19 @@ func NewEdgeMap[E any](G, GT [][]E,
     cond func(v int) bool,
     get func(e E) int) *EdgeMap[E] {
     n := len(G)
-    m := 0
+    // Initialize m as atomic int64
+    var m int64
     var wg sync.WaitGroup
-    ch := make(chan int, n)
-
-    // parallel compute total edges m
+    // Parallel accumulate edge counts
     for _, edges := range G {
         wg.Add(1)
         go func(es []E) {
             defer wg.Done()
-            ch <- len(es)
+            // atomically add the length of this slice to m
+            atomic.AddInt64(&m, int64(len(es)))
         }(edges)
     }
-    go func() {
-        wg.Wait()
-        close(ch)
-    }()
-    for cnt := range ch {
-        m += cnt
-    }
+    wg.Wait()
 
     return &EdgeMap[E]{
         n:    n,
