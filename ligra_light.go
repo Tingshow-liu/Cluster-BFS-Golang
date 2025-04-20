@@ -69,8 +69,8 @@ func (vs *VertexSubset) AddVertices(V []int) {
 		for _, v := range V {
 			vs.dense[v] = true
 		}
+		vs.n = countTrue(vs.dense)
 	}
-	vs.n = countTrue(vs.dense)
 }
 
 // ToSeq returns a unified slice of vertices regardless
