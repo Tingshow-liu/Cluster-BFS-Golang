@@ -2,6 +2,7 @@ package main
 
 // analogue to Parlay's parallel loops
 import (
+	"cluster_bfs_go/parlay_go"
 	"sync"
 )
 
@@ -63,14 +64,23 @@ func NewDense(dense []bool) VertexSubset {
 // if dense, it sets the corresponding indices to true.
 func (vs *VertexSubset) AddVertices(V []int) {
 	if vs.isSparse {
-		vs.sparse = append(vs.sparse, V...)
-		vs.n += len(V)
+		old := vs.sparse
+		total := len(old) + len(V)
+		// Allocate a brand-new slice, like parlay::append returns a new sequence
+		combined := make([]int, total)
+
+		// parallel copy old data into combined[:len(old)]
+		parlay_go.Append(old, combined[:len(old)])
+		// parallel copy new vertices into combined[len(old):]
+		parlay_go.Append(V, combined[len(old):])
+		vs.sparse = combined
 	} else {
+		// Mimic Ligra in C++: a plain (sequential) for-loop is V is dense
 		for _, v := range V {
 			vs.dense[v] = true
 		}
-		vs.n = countTrue(vs.dense)
 	}
+	vs.n += len(V) // Same as "n += V.size();"
 }
 
 // ToSeq returns a unified slice of vertices regardless
@@ -79,13 +89,7 @@ func (vs *VertexSubset) ToSeq() []int {
 	if vs.isSparse {
 		return vs.sparse
 	}
-	var seq []int
-	for i, active := range vs.dense {
-		if active {
-			seq = append(seq, i)
-		}
-	}
-	return seq
+	return parlay_go.PackIndex(vs.dense)
 }
 
 // Apply applies a function f to every vertex in the subset.
