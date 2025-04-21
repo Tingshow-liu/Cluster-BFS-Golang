@@ -195,42 +195,69 @@ func (em *EdgeMap[E]) f(u, v int, e E, backwards bool) bool {
 	return em.fa(u, v, e, backwards)
 }
 
-// edgeMapSparse implements the sparse edge_map.
-// It iterates over the sparse list of vertices and for each vertex u,
-// it iterates over its outgoing edges in G[u]. For every edge e,
-// it extracts the target vertex v = get(e), tests cond(v),
-// and if em.f(u,v,e,false) returns true, it includes v in the result.
+// edgeMapSparseParallel parallelizes across CPU workers while preserving
+// input order: it splits the vertices list into chunks, each worker
+// processes its range in order, collecting targets per u in adjacency order.
 func (em *EdgeMap[E]) edgeMapSparse(vertices []int) []int {
-	var wg sync.WaitGroup
-    out := make(chan int)
-    
-    // aggregator
-    var res []int
-    aggWg := sync.WaitGroup{}
-    aggWg.Add(1)
-    go func() {
-        defer aggWg.Done()
-        for v := range out {
-            res = append(res, v)
-        }
-    }()
+	n := len(vertices)
 
-    // worker per source vertex
-    for _, u := range vertices {
+    // Determine number of parallel workers (<= len(vertices))
+	// Choose a level of parallelism equal to the number of logical CPU cores available
+    workers := runtime.NumCPU()
+    if n < workers {
+        workers = n
+    }
+	// Calculate chunkSize so that the vertices slice is evenly divided among workers, rounding up to cover all elements
+    chunkSize := (n + workers - 1) / workers
+
+	// Step 1: process each chunk in parallel
+
+    // results[w] holds the flattened matches for the w-th chunk
+    results := make([][]int, workers)
+    var wg sync.WaitGroup
+	// Start a loop over each worker index w to launch one goroutine per chunk
+    for w := 0; w < workers; w++ {
+        // Compute the starting index start for the w-th chunk in the vertices slice
+		start := w * chunkSize
+        // If start is out of bounds (no vertices left), skip launching a goroutine for this worker
+		if start >= n {
+            continue
+        }
+        end := start + chunkSize
+        if end > n {
+            end = n
+        }
         wg.Add(1)
-        go func(u int) {
+		// Launch a goroutine capturing the worker index w and its slice bounds s, e
+        go func(w, s, e int) {
             defer wg.Done()
-            for _, e := range em.G[u] {
-                v := em.get(e)
-                if em.cond(v) && em.f(u, v, e, false) {
-                    out <- v
+			// Within each worker, declare localFlat to collect this chunk’s matching targets in order
+            var localFlat []int
+            // Process vertices[s:e] in original input order
+            for i := s; i < e; i++ {
+                u := vertices[i]
+                // Traverse G[u] in deterministic adjacency order
+                for _, edge := range em.G[u] {
+                    v := em.get(edge)
+                    if em.cond(v) && em.f(u, v, edge, false) {
+                        localFlat = append(localFlat, v)
+                    }
                 }
             }
-        }(u)
+            results[w] = localFlat
+        }(w, start, end)
     }
     wg.Wait()
-    close(out)
-    aggWg.Wait()
+
+    // Flatten chunked results in worker index order to preserve global ordering
+    total := 0
+    for _, chunk := range results {
+        total += len(chunk)
+    }
+    res := make([]int, 0, total)
+    for _, chunk := range results {
+        res = append(res, chunk...)
+    }
     return res
 }
 
