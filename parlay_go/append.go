@@ -8,6 +8,9 @@ import (
 // Helper function "parlay::append" called by function "AddVertices" in ligra_light.go
 func Append(src []int, dst []int) {
 	n := len(src)
+	if n == 0 { // To avoid "integer divide by zero" when calculating chunk later
+		return
+	}
 	// Decide number of workes, which is the number of logical CPUs
 	workers := runtime.GOMAXPROCS(0)
 	if workers > n {
