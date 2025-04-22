@@ -270,35 +270,64 @@ func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
 	result := make([]bool, em.n)
     var wg sync.WaitGroup
 
+    // Vertex-level parallelism: one goroutine per target vertex
     for v := 0; v < em.n; v++ {
         wg.Add(1)
         go func(v int) {
             defer wg.Done()
+
+            // Pre-filter on the vertex
             if !em.cond(v) {
                 result[v] = false
                 return
             }
-            if exitEarly {
-                found := false
-                for _, e := range em.GT[v] {
-                    u := em.get(e)
-                    if vertices[u] && em.f(u, v, e, true) {
-                        found = true
-                        break
-                    }
-                }
-                result[v] = found
-            } else {
-                resFlag := false
-                for _, e := range em.GT[v] {
-                    u := em.get(e)
-                    if vertices[u] && em.f(u, v, e, true) {
-                        resFlag = true
-                        break
-                    }
-                }
-                result[v] = resFlag
+
+            edges := em.GT[v]
+            Ecount := len(edges)
+            if Ecount == 0 {
+                result[v] = false
+                return
             }
+
+            // Edge-level parallelism: divide edges into chunks
+            workers := runtime.NumCPU()
+            if Ecount < workers {
+                workers = Ecount
+            }
+            chunk := (Ecount + workers - 1) / workers
+
+            var foundFlag int32
+            var subWg sync.WaitGroup
+
+            for w := 0; w < workers; w++ {
+                start := w * chunk
+                if start >= Ecount {
+                    break
+                }
+                end := start + chunk
+                if end > Ecount {
+                    end = Ecount
+                }
+                subWg.Add(1)
+                go func(start, end int) {
+                    defer subWg.Done()
+                    localFound := false
+                    // Scan this chunk of edges
+                    for i := start; i < end; i++ {
+                        e := edges[i]
+                        u := em.get(e)
+                        if vertices[u] && em.f(u, v, e, true) {
+                            localFound = true
+                        }
+                    }
+                    if localFound {
+                        atomic.StoreInt32(&foundFlag, 1)
+                    }
+                }(start, end)
+            }
+            subWg.Wait()
+
+            result[v] = atomic.LoadInt32(&foundFlag) == 1
         }(v)
     }
     wg.Wait()
