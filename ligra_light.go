@@ -267,7 +267,8 @@ func (em *EdgeMap[E]) edgeMapSparse(vertices []int) []int {
 // exitEarly flag, it either stops at the first matching edge or
 // aggregates over all edges using a logical OR.
 func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
-	result := make([]bool, em.n)
+	// Allocate the output slice result with one entry per vertex, all initialized to false
+    result := make([]bool, em.n)
     var wg sync.WaitGroup
 
     // Vertex-level parallelism: one goroutine per target vertex
@@ -281,7 +282,8 @@ func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
                 result[v] = false
                 return
             }
-
+            // Fetch incoming edges (GT[v]) and count them
+            // If none, leave result[v] false and exit
             edges := em.GT[v]
             Ecount := len(edges)
             if Ecount == 0 {
@@ -290,16 +292,21 @@ func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
             }
 
             // Edge-level parallelism: divide edges into chunks
+            // Set workers to the number of CPU cores (capped by the number of edges)
             workers := runtime.NumCPU()
             if Ecount < workers {
                 workers = Ecount
             }
+            // Compute chunk size to evenly split the edge list among those workers
             chunk := (Ecount + workers - 1) / workers
 
+            // An atomic flag foundFlag (0 or 1) to record if any edge passes
             var foundFlag int32
+            // A second WaitGroup (subWg) to wait on all edge‐chunk goroutines
             var subWg sync.WaitGroup
 
             for w := 0; w < workers; w++ {
+                // compute its [start, end] range
                 start := w * chunk
                 if start >= Ecount {
                     break
@@ -308,11 +315,12 @@ func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
                 if end > Ecount {
                     end = Ecount
                 }
+                // launch a goroutine over that slice
                 subWg.Add(1)
                 go func(start, end int) {
                     defer subWg.Done()
                     localFound := false
-                    // Scan this chunk of edges
+                    // Scan this chunk of edges sequentially
                     for i := start; i < end; i++ {
                         e := edges[i]
                         u := em.get(e)
@@ -327,6 +335,7 @@ func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
             }
             subWg.Wait()
 
+            // if any chunk found a match (foundFlag==1), then result[v] becomes true.
             result[v] = atomic.LoadInt32(&foundFlag) == 1
         }(v)
     }
