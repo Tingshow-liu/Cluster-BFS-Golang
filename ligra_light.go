@@ -413,7 +413,7 @@ func (em *EdgeMap[E]) Run(vs VertexSubset, exitEarly bool) VertexSubset {
         for cnt := range ch {
             d += cnt
         }
-        if (activeCount + d) > em.m/10 {
+        if (activeCount + d) > int(em.m/10) {
             dVertices := make([]bool, em.n)
             for _, i := range vs.sparse {
                 dVertices[i] = true
