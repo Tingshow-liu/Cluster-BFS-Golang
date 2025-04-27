@@ -8,7 +8,7 @@ import (
 )
 
 // Convert the first several lines of bin data to a human readable format
-func peek(path string) {
+func Peek(path string) {
 	f, err := os.Open(path)
 	if err != nil {
 		panic(err)

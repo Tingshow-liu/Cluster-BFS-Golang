@@ -3,9 +3,9 @@ package main
 // analogue to Parlay's parallel loops
 import (
 	"cluster_bfs_go/parlay_go"
+	"runtime"
 	"sync"
 	"sync/atomic"
-	"runtime"
 )
 
 // ----------------------------------------------------
@@ -130,6 +130,7 @@ func (vs *VertexSubset) Apply(f func(int)) {
 func Identity[T any](x T) T {
 	return x
 }
+
 // func IdentityGet[E any](e E) int { return e.(int) }
 
 // ----------------------------------------------------
@@ -162,35 +163,34 @@ type EdgeMap[E any] struct {
 // NewEdgeMap constructs a new EdgeMap. It computes n (number of vertices)
 // and m (total number of edges) from the input graph G.
 func NewEdgeMap[E any](G, GT [][]E,
-    fa func(u, v int, e E, backwards bool) bool,
-    cond func(v int) bool,
-    get func(e E) int) *EdgeMap[E] {
-    n := len(G)
-    // Initialize m as atomic int64
-    var m int64
-    var wg sync.WaitGroup
-    // Parallel accumulate edge counts
-    for _, edges := range G {
-        wg.Add(1)
-        go func(es []E) {
-            defer wg.Done()
-            // atomically add the length of this slice to m
-            atomic.AddInt64(&m, int64(len(es)))
-        }(edges)
-    }
-    wg.Wait()
+	fa func(u, v int, e E, backwards bool) bool,
+	cond func(v int) bool,
+	get func(e E) int) *EdgeMap[E] {
+	n := len(G)
+	// Initialize m as atomic int64
+	var m int64
+	var wg sync.WaitGroup
+	// Parallel accumulate edge counts
+	for _, edges := range G {
+		wg.Add(1)
+		go func(es []E) {
+			defer wg.Done()
+			// atomically add the length of this slice to m
+			atomic.AddInt64(&m, int64(len(es)))
+		}(edges)
+	}
+	wg.Wait()
 
-    return &EdgeMap[E]{
-        n:    n,
-        m:    m,
-        fa:   fa,
-        get:  get,
-        cond: cond,
-        G:    G,
-        GT:   GT,
-    }
+	return &EdgeMap[E]{
+		n:    n,
+		m:    m,
+		fa:   fa,
+		get:  get,
+		cond: cond,
+		G:    G,
+		GT:   GT,
+	}
 }
-
 
 // f is a wrapper that calls the user-provided function fa with four arguments.
 // In the original C++ code, a compile-time conditional was used to adjust parameters,
@@ -205,64 +205,64 @@ func (em *EdgeMap[E]) f(u, v int, e E, backwards bool) bool {
 func (em *EdgeMap[E]) edgeMapSparse(vertices []int) []int {
 	n := len(vertices)
 
-    // Determine number of parallel workers (<= len(vertices))
+	// Determine number of parallel workers (<= len(vertices))
 	// Choose a level of parallelism equal to the number of logical CPU cores available
-    workers := runtime.NumCPU()
-    if n < workers {
-        workers = n
-    }
+	workers := runtime.NumCPU()
+	if n < workers {
+		workers = n
+	}
 	// Calculate chunkSize so that the vertices slice is evenly divided among workers, rounding up to cover all elements
-    chunkSize := (n + workers - 1) / workers
+	chunkSize := (n + workers - 1) / workers
 
 	// Step 1: process each chunk in parallel
 
-    // results[w] holds the flattened matches for the w-th chunk
-    results := make([][]int, workers)
-    var wg sync.WaitGroup
+	// results[w] holds the flattened matches for the w-th chunk
+	results := make([][]int, workers)
+	var wg sync.WaitGroup
 	// Start a loop over each worker index w to launch one goroutine per chunk
-    for w := 0; w < workers; w++ {
-        // Compute the starting index start for the w-th chunk in the vertices slice
+	for w := 0; w < workers; w++ {
+		// Compute the starting index start for the w-th chunk in the vertices slice
 		start := w * chunkSize
-        // If start is out of bounds (no vertices left), skip launching a goroutine for this worker
+		// If start is out of bounds (no vertices left), skip launching a goroutine for this worker
 		if start >= n {
-            continue
-        }
-        end := start + chunkSize
-        if end > n {
-            end = n
-        }
-        wg.Add(1)
+			continue
+		}
+		end := start + chunkSize
+		if end > n {
+			end = n
+		}
+		wg.Add(1)
 		// Launch a goroutine capturing the worker index w and its slice bounds s, e
-        go func(w, s, e int) {
-            defer wg.Done()
+		go func(w, s, e int) {
+			defer wg.Done()
 			// Within each worker, declare localFlat to collect this chunk’s matching targets in order
-            var localFlat []int
-            // Process vertices[s:e] in original input order
-            for i := s; i < e; i++ {
-                u := vertices[i]
-                // Traverse G[u] in deterministic adjacency order
-                for _, edge := range em.G[u] {
-                    v := em.get(edge)
-                    if em.cond(v) && em.f(u, v, edge, false) {
-                        localFlat = append(localFlat, v)
-                    }
-                }
-            }
-            results[w] = localFlat
-        }(w, start, end)
-    }
-    wg.Wait()
+			var localFlat []int
+			// Process vertices[s:e] in original input order
+			for i := s; i < e; i++ {
+				u := vertices[i]
+				// Traverse G[u] in deterministic adjacency order
+				for _, edge := range em.G[u] {
+					v := em.get(edge)
+					if em.cond(v) && em.f(u, v, edge, false) {
+						localFlat = append(localFlat, v)
+					}
+				}
+			}
+			results[w] = localFlat
+		}(w, start, end)
+	}
+	wg.Wait()
 
-    // Flatten chunked results in worker index order to preserve global ordering
-    total := 0
-    for _, chunk := range results {
-        total += len(chunk)
-    }
-    res := make([]int, 0, total)
-    for _, chunk := range results {
-        res = append(res, chunk...)
-    }
-    return res
+	// Flatten chunked results in worker index order to preserve global ordering
+	total := 0
+	for _, chunk := range results {
+		total += len(chunk)
+	}
+	res := make([]int, 0, total)
+	for _, chunk := range results {
+		res = append(res, chunk...)
+	}
+	return res
 }
 
 // edgeMapDense implements the dense edge_map.
@@ -272,114 +272,114 @@ func (em *EdgeMap[E]) edgeMapSparse(vertices []int) []int {
 // aggregates over all edges using a logical OR.
 func (em *EdgeMap[E]) edgeMapDense(vertices []bool, exitEarly bool) []bool {
 	// Allocate the output slice result with one entry per vertex, all initialized to false
-    result := make([]bool, em.n)
-    var wg sync.WaitGroup
+	result := make([]bool, em.n)
+	var wg sync.WaitGroup
 
-    // Vertex-level parallelism: one goroutine per target vertex
-    for v := 0; v < em.n; v++ {
-        wg.Add(1)
-        go func(v int) {
-            defer wg.Done()
+	// Vertex-level parallelism: one goroutine per target vertex
+	for v := 0; v < em.n; v++ {
+		wg.Add(1)
+		go func(v int) {
+			defer wg.Done()
 
-            // Pre-filter on the vertex
-            if !em.cond(v) {
-                result[v] = false
-                return
-            }
-            // Fetch incoming edges (GT[v]) and count them
-            // If none, leave result[v] false and exit
-            edges := em.GT[v]
-            Ecount := len(edges)
-            if Ecount == 0 {
-                result[v] = false
-                return
-            }
+			// Pre-filter on the vertex
+			if !em.cond(v) {
+				result[v] = false
+				return
+			}
+			// Fetch incoming edges (GT[v]) and count them
+			// If none, leave result[v] false and exit
+			edges := em.GT[v]
+			Ecount := len(edges)
+			if Ecount == 0 {
+				result[v] = false
+				return
+			}
 
-            // Edge-level parallelism: divide edges into chunks
-            // Set workers to the number of CPU cores (capped by the number of edges)
-            workers := runtime.NumCPU()
-            if Ecount < workers {
-                workers = Ecount
-            }
-            // Compute chunk size to evenly split the edge list among those workers
-            chunk := (Ecount + workers - 1) / workers
+			// Edge-level parallelism: divide edges into chunks
+			// Set workers to the number of CPU cores (capped by the number of edges)
+			workers := runtime.NumCPU()
+			if Ecount < workers {
+				workers = Ecount
+			}
+			// Compute chunk size to evenly split the edge list among those workers
+			chunk := (Ecount + workers - 1) / workers
 
-            // An atomic flag foundFlag (0 or 1) to record if any edge passes
-            var foundFlag int32
-            // A second WaitGroup (subWg) to wait on all edge‐chunk goroutines
-            var subWg sync.WaitGroup
+			// An atomic flag foundFlag (0 or 1) to record if any edge passes
+			var foundFlag int32
+			// A second WaitGroup (subWg) to wait on all edge‐chunk goroutines
+			var subWg sync.WaitGroup
 
-            for w := 0; w < workers; w++ {
-                // compute its [start, end] range
-                start := w * chunk
-                if start >= Ecount {
-                    break
-                }
-                end := start + chunk
-                if end > Ecount {
-                    end = Ecount
-                }
-                // launch a goroutine over that slice
-                subWg.Add(1)
-                go func(start, end int) {
-                    defer subWg.Done()
-                    localFound := false
-                    // Scan this chunk of edges sequentially
-                    for i := start; i < end; i++ {
-                        e := edges[i]
-                        u := em.get(e)
-                        if vertices[u] && em.f(u, v, e, true) {
-                            localFound = true
-                        }
-                    }
-                    if localFound {
-                        atomic.StoreInt32(&foundFlag, 1)
-                    }
-                }(start, end)
-            }
-            subWg.Wait()
+			for w := 0; w < workers; w++ {
+				// compute its [start, end] range
+				start := w * chunk
+				if start >= Ecount {
+					break
+				}
+				end := start + chunk
+				if end > Ecount {
+					end = Ecount
+				}
+				// launch a goroutine over that slice
+				subWg.Add(1)
+				go func(start, end int) {
+					defer subWg.Done()
+					localFound := false
+					// Scan this chunk of edges sequentially
+					for i := start; i < end; i++ {
+						e := edges[i]
+						u := em.get(e)
+						if vertices[u] && em.f(u, v, e, true) {
+							localFound = true
+						}
+					}
+					if localFound {
+						atomic.StoreInt32(&foundFlag, 1)
+					}
+				}(start, end)
+			}
+			subWg.Wait()
 
-            // if any chunk found a match (foundFlag==1), then result[v] becomes true.
-            result[v] = atomic.LoadInt32(&foundFlag) == 1
-        }(v)
-    }
-    wg.Wait()
-    return result
+			// if any chunk found a match (foundFlag==1), then result[v] becomes true.
+			result[v] = atomic.LoadInt32(&foundFlag) == 1
+		}(v)
+	}
+	wg.Wait()
+	return result
 }
 
 // countTrue is a helper that counts how many elements in a bool slice are true.
 func countTrue(b []bool) int {
 	n := len(b)
-    workers := runtime.NumCPU()
-    chunk := (n + workers - 1) / workers
-    var wg sync.WaitGroup
-    ch := make(chan int, workers)
+	workers := runtime.NumCPU()
+	chunk := (n + workers - 1) / workers
+	var wg sync.WaitGroup
+	ch := make(chan int, workers)
 
-    for i := 0; i < n; i += chunk {
-        end := i + chunk
-        if end > n {
-            end = n
-        }
-        wg.Add(1)
-        go func(slice []bool) {
-            defer wg.Done()
-            cnt := 0
-            for _, v := range slice {
-                if v {
-                    cnt++
-                }
-            }
-            ch <- cnt
-        }(b[i:end])
-    }
-    wg.Wait()
-    close(ch)
+	for i := 0; i < n; i += chunk {
+		end := i + chunk
+		if end > n {
+			end = n
+		}
+		wg.Add(1)
+		go func(slice []bool) {
+			defer wg.Done()
+			cnt := 0
+			for _, v := range slice {
+				if v {
+					cnt++
+				}
+			}
+			ch <- cnt
+		}(b[i:end])
+	}
+	wg.Wait()
+	close(ch)
 
-    total := 0
-    for c := range ch {
-        total += c
-    }
-    return total
+	total := 0
+	for c := range ch {
+		total += c
+	}
+	return total
 }
 
 // Run is analogous to the overloaded operator() in the C++ code.
@@ -387,50 +387,49 @@ func countTrue(b []bool) int {
 // of the input vertex subset and then returns a new VertexSubset as result.
 func (em *EdgeMap[E]) Run(vs VertexSubset, exitEarly bool) VertexSubset {
 	// parallel count of active vertices
-    var activeCount int
-    if vs.isSparse {
-        activeCount = len(vs.sparse)
-    } else {
-        activeCount = countTrue(vs.dense)
-    }
+	var activeCount int
+	if vs.isSparse {
+		activeCount = len(vs.sparse)
+	} else {
+		activeCount = countTrue(vs.dense)
+	}
 
-    if vs.isSparse {
-        // parallel compute incident edges count
-        var wg sync.WaitGroup
-        ch := make(chan int, len(vs.sparse))
-        for _, v := range vs.sparse {
-            wg.Add(1)
-            go func(v int) {
-                defer wg.Done()
-                ch <- len(em.G[v])
-            }(v)
-        }
-        go func() {
-            wg.Wait()
-            close(ch)
-        }()
-        d := 0
-        for cnt := range ch {
-            d += cnt
-        }
-        if (activeCount + d) > em.m/10 {
-            dVertices := make([]bool, em.n)
-            for _, i := range vs.sparse {
-                dVertices[i] = true
-            }
-            newDense := em.edgeMapDense(dVertices, exitEarly)
-            return NewDense(newDense)
-        }
-        newSparse := em.edgeMapSparse(vs.sparse)
-        return NewSparse(newSparse)
-    } else {
-        if activeCount > em.n/20 {
-            newDense := em.edgeMapDense(vs.dense, exitEarly)
-            return NewDense(newDense)
-        }
-        seq := vs.ToSeq()
-        newSparse := em.edgeMapSparse(seq)
-        return NewSparse(newSparse)
-    }
+	if vs.isSparse {
+		// parallel compute incident edges count
+		var wg sync.WaitGroup
+		ch := make(chan int, len(vs.sparse))
+		for _, v := range vs.sparse {
+			wg.Add(1)
+			go func(v int) {
+				defer wg.Done()
+				ch <- len(em.G[v])
+			}(v)
+		}
+		go func() {
+			wg.Wait()
+			close(ch)
+		}()
+		d := 0
+		for cnt := range ch {
+			d += cnt
+		}
+		if (activeCount + d) > int(em.m/10) {
+			dVertices := make([]bool, em.n)
+			for _, i := range vs.sparse {
+				dVertices[i] = true
+			}
+			newDense := em.edgeMapDense(dVertices, exitEarly)
+			return NewDense(newDense)
+		}
+		newSparse := em.edgeMapSparse(vs.sparse)
+		return NewSparse(newSparse)
+	} else {
+		if activeCount > em.n/20 {
+			newDense := em.edgeMapDense(vs.dense, exitEarly)
+			return NewDense(newDense)
+		}
+		seq := vs.ToSeq()
+		newSparse := em.edgeMapSparse(seq)
+		return NewSparse(newSparse)
+	}
 }
-

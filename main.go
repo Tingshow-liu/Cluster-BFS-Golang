@@ -2,61 +2,82 @@ package main
 
 import (
 	"cluster_bfs_go/graphutils"
+	"flag"
 	"fmt"
 	"os"
 )
 
+func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int) {
+	ns := len(seeds)
+	k := len(seeds[0])
+	// n := len(G)
+
+	fmt.Printf("Radius: %d\n", R)
+	fmt.Printf("Number of batches: %d, batch size k = %d\n", ns, k)
+
+	// allocate ClusterBFS once
+	cbfs := &ClusterBFS{G: G, GT: GT, R: R}
+
+	// warm-up on first batch
+	firstBatch := seeds[0]
+	goSeeds := cbfs.Init(firstBatch)
+	cbfs.RunCBFS(goSeeds)
+	if verify {
+		cbfs.VerifyCBFS(firstBatch)
+	}
+
+	// // timed runs
+	// start := time.Now()
+	// for i := 0; i < t; i++ {
+	// 	for _, batch := range seeds {
+	// 		goSeeds = cbfs.Init(batch)
+	// 		cbfs.RunCBFS(goSeeds)
+	// 		if verify {
+	// 			cbfs.VerifyCBFS(first)
+	// 		}
+	// 	}
+	// }
+	// elapsed := time.Since(start)
+	// avg := elapsed / time.Duration(t)
+	// fmt.Printf("average cluster BFS time: %v\n", avg)
+
+}
+
 // Read the bin files and print part of the graph
 func main() {
-	// Read input data and construct the graph
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s graph.bin\n", os.Args[0])
+	// flags
+	var (
+		path   = flag.String("f", "", "path to graph.bin")
+		t      = flag.Int("t", 3, "number of iterations")
+		ns     = flag.Int("ns", 10, "number of seed batches")
+		k      = flag.Int("k", 8, "seeds per batch")
+		r      = flag.Int("r", 4, "BFS radius for verify")
+		verify = flag.Bool("v", false, "verify with Ligra BFS")
+	)
+	flag.Parse()
+	if *path == "" {
+		fmt.Fprintln(os.Stderr, "Usage: -f graph.bin [-t #] [-ns #] [-k #] [-v]")
 		os.Exit(1)
 	}
-	path := os.Args[1]
 
-	// start := time.Now()
-	offsets, edges, err := graphutils.ReadGraphFromBin(path)
+	// Read CSR and construct the graph
+	offs64, edges32, err := graphutils.ReadGraphFromBin(*path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
 		os.Exit(1)
 	}
-	// fmt.Printf("Load time: %v\n\n", time.Since(start))
 
-	// Print first 5 vertices (or fewer, if n<5)
-	n := len(offsets) - 1
-	limit := 5
-	if n < limit {
-		limit = n
-	}
-	for i := 0; i < limit; i++ {
-		startIdx := offsets[i]
-		endIdx := offsets[i+1]
-		neighbors := edges[startIdx:endIdx]
-		fmt.Printf("Vertex %3d has %2d neighbors: %v\n",
-			i, len(neighbors), neighbors)
-	}
+	// Build Go adjacent lists
+	G := graphutils.BuildAdjFromCSR(offs64, edges32)
+	GT := graphutils.TransposeAdj(G)
 
-	// Seeds selection
+	// Select seeds
+	seeds := make([][]int, *ns)
+	for i := range seeds {
+		seeds[i] = make([]int, *k)
+	}
+	graphutils.SelectSeeds1(G, seeds)
+
+	// run single‐batch test
+	singleBatchTest(seeds, G, GT, *t, *verify, *r)
 }
-
-// // Run the test for our own tiny graph (data/test.txt) (TBD)
-// func main() {
-// 	G := utils.ReadAdjList("data/test.txt")
-// 	// Create the transpose of G
-// 	GT := make([][]int, len(G))
-// 	for u, neighbors := range G {
-// 		for _, v := range neighbors {
-// 			GT[v] = append(GT[v], u)
-// 		}
-// 	}
-
-// 	cbfs := &ClusterBFS{G: G, GT: GT, R: 2} // cbfs: a ClusterBFS object stored by pointer
-// 	seeds := cbfs.Init([]int{0, 2})         // picks {0,2} as seeds
-// 	cbfs.RunBFS(seeds)
-
-// 	fmt.Println("Distances D:", cbfs.D)
-// 	fmt.Println("Seed masks S:", cbfs.S)
-// 	fmt.Println("G:", G)
-// 	fmt.Println("GT:", GT)
-// }
