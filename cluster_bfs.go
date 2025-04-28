@@ -14,10 +14,10 @@ package main
 
 #include "cwrapper/wrapper.h"
 */
-import "C"
+import "C" // To apply C++ Ligra code to Go for verification
 
 import (
-	"cluster_bfs_go/bitutils" // go.mod is in "module cluster_bfs_go"
+	"cluster_bfs_go/bitutils"
 	"cluster_bfs_go/graphutils"
 	"fmt"
 	"sync"
@@ -31,8 +31,8 @@ type ClusterBFS struct {
 	GT        [][]int // Input
 	S0        []uint64
 	S1        []uint64
-	D         []uint64
-	S         [][]uint64
+	D         []uint64   // Output
+	S         [][]uint64 // Output
 	Distances []uint64
 	R         int // Input
 	INF       uint64
@@ -166,7 +166,7 @@ func (cbfs *ClusterBFS) RunCBFS(seeds []int) {
 	}
 }
 
-// VerifyCBFS: mimics the C++ verify_CBFS logic but uses Ligra’s BFS via cgo.
+// VerifyCBFS: mimics the C++ verify_CBFS logic, using Ligra’s BFS via cgo
 // seeds: the list of seed vertices (cbfs.Init returned these).
 func (cbfs *ClusterBFS) VerifyCBFS(seeds []int) error {
 	n := len(cbfs.G)
@@ -175,42 +175,41 @@ func (cbfs *ClusterBFS) VerifyCBFS(seeds []int) error {
 	}
 
 	// 1) Flatten G and GT into CSR form
-	// offs, edges := graphutils.FlattenCSR(cbfs.G)
-	// offsGT, edgesGT := graphutils.FlattenCSR(cbfs.GT)
 	offsGo, edgesGo := graphutils.FlattenCSR(cbfs.G)
-	offsGT, edgesGT := graphutils.FlattenCSR(cbfs.G)
+	offsGT, edgesGT := graphutils.FlattenCSR(cbfs.GT)
 
-	// // 2) One-time C++ graph build
-	// C.InitLigraGraph(
-	// 	(*C.int)(unsafe.Pointer(&offs[0])), C.int(len(offs)),
-	// 	(*C.int)(unsafe.Pointer(&edges[0])), C.int(len(edges)),
-	// 	(*C.int)(unsafe.Pointer(&offsGT[0])), C.int(len(offsGT)),
-	// 	(*C.int)(unsafe.Pointer(&edgesGT[0])), C.int(len(edgesGT)),
-	// )
-	
 	// 2) allocate C-backed arrays
-	offsC  := make([]C.int, len(offsGo))
+	offsC := make([]C.int, len(offsGo))
 	edgesC := make([]C.int, len(edgesGo))
-	for i, v := range offsGo  { offsC[i]  = C.int(v) }
-	for i, v := range edgesGo { edgesC[i] = C.int(v) }
+	for i, v := range offsGo {
+		offsC[i] = C.int(v)
+	}
+	for i, v := range edgesGo {
+		edgesC[i] = C.int(v)
+	}
 
 	// same for the transpose
-	offsGTC  := make([]C.int, len(offsGT))
+	offsGTC := make([]C.int, len(offsGT))
 	edgesGTC := make([]C.int, len(edgesGT))
-	for i, v := range offsGT  { offsGTC[i]  = C.int(v) }
-	for i, v := range edgesGT { edgesGTC[i] = C.int(v) }
+	for i, v := range offsGT {
+		offsGTC[i] = C.int(v)
+	}
+	for i, v := range edgesGT {
+		edgesGTC[i] = C.int(v)
+	}
 
 	// 3) now call safely
 	C.InitLigraGraph(
-	(*C.int)(unsafe.Pointer(&offsC[0])),  C.int(len(offsC)),
-	(*C.int)(unsafe.Pointer(&edgesC[0])), C.int(len(edgesC)),
-	(*C.int)(unsafe.Pointer(&offsGTC[0])), C.int(len(offsGTC)),
-	(*C.int)(unsafe.Pointer(&edgesGTC[0])),C.int(len(edgesGTC)),
+		(*C.int)(unsafe.Pointer(&offsC[0])), C.int(len(offsC)),
+		(*C.int)(unsafe.Pointer(&edgesC[0])), C.int(len(edgesC)),
+		(*C.int)(unsafe.Pointer(&offsGTC[0])), C.int(len(offsGTC)),
+		(*C.int)(unsafe.Pointer(&edgesGTC[0])), C.int(len(edgesGTC)),
 	)
-	// ensure we free at the end
+	// Make sure to free memory at the end
 	defer C.FreeLigraGraph()
 
-	INF := cbfs.INF
+	// Align Ligra's (C++) INF (2^31 - 1) with Go's INF (2^64 - 1)
+	const ligraInf32 = (1 << 31) - 1
 	R := cbfs.R
 
 	// 3) For each seed, run Ligra BFS and compare
@@ -231,8 +230,8 @@ func (cbfs *ClusterBFS) VerifyCBFS(seeds []int) error {
 		// compare Ligra’s distances (answer) vs. your bit-parallel result
 		for v := 0; v < n; v++ {
 			dTrue := answer[v]
-			dQuery := cbfs.Distances[v]
-			if dTrue == INF {
+			dQuery := cbfs.D[v]
+			if dTrue == ligraInf32 {
 				// unreachable in true BFS, skip
 				continue
 			}
@@ -266,7 +265,5 @@ func (cbfs *ClusterBFS) VerifyCBFS(seeds []int) error {
 			}
 		}
 	}
-
-	fmt.Println("PASS")
 	return nil
 }

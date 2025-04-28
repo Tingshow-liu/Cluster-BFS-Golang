@@ -23,7 +23,11 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int) {
 	goSeeds := cbfs.Init(firstBatch)
 	cbfs.RunCBFS(goSeeds)
 	if verify {
-		cbfs.VerifyCBFS(firstBatch)
+		if err := cbfs.VerifyCBFS(firstBatch); err != nil {
+			fmt.Fprintf(os.Stderr, "verification failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("PASS")
 	}
 
 	// // timed runs

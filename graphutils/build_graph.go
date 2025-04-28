@@ -24,37 +24,26 @@ func TransposeAdj(G [][]int) [][]int {
 	return GT
 }
 
-// flattenCSR: converts an adjacency‐list graph back into its CSR form
-// func FlattenCSR(G [][]int) (offs, edges []int) {
-// 	n := len(G)
-// 	offs = make([]int, n+1)
-// 	for u := 0; u < n; u++ {
-// 		offs[u+1] = offs[u] + len(G[u])
-// 		edges = append(edges, G[u]...)
-// 	}
-// 	return
-// }
-
 // FlattenCSR takes an adjacency list and produces
 // the CSR offsets+edges arrays.
 func FlattenCSR(G [][]int) ([]int, []int) {
-    n := len(G)
-    // make the offsets array one longer than the number of vertices
-    offs := make([]int, n+1)
+	n := len(G)
+	// make the offsets array one longer than the number of vertices
+	offs := make([]int, n+1)
 
-    // (optional) pre-allocate edges so we don’t keep growing the slice
-    total := 0
-    for _, nbrs := range G {
-        total += len(nbrs)
-    }
-    edges := make([]int, 0, total)
+	// (optional) pre-allocate edges so we don’t keep growing the slice
+	total := 0
+	for _, nbrs := range G {
+		total += len(nbrs)
+	}
+	edges := make([]int, 0, total)
 
-    // build prefix sums and edge list
-    for u, nbrs := range G {
-        offs[u+1] = offs[u] + len(nbrs)
-        edges = append(edges, nbrs...)
-    }
+	// build prefix sums and edge list
+	for u, nbrs := range G {
+		offs[u+1] = offs[u] + len(nbrs)
+		edges = append(edges, nbrs...)
+	}
 
-    // now *actually* return the two slices
-    return offs, edges
+	// now *actually* return the two slices
+	return offs, edges
 }
