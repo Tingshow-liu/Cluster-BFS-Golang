@@ -175,15 +175,37 @@ func (cbfs *ClusterBFS) VerifyCBFS(seeds []int) error {
 	}
 
 	// 1) Flatten G and GT into CSR form
-	offs, edges := graphutils.FlattenCSR(cbfs.G)
-	offsGT, edgesGT := graphutils.FlattenCSR(cbfs.GT)
+	// offs, edges := graphutils.FlattenCSR(cbfs.G)
+	// offsGT, edgesGT := graphutils.FlattenCSR(cbfs.GT)
+	offsGo, edgesGo := graphutils.FlattenCSR(cbfs.G)
+	offsGT, edgesGT := graphutils.FlattenCSR(cbfs.G)
 
-	// 2) One-time C++ graph build
+	// // 2) One-time C++ graph build
+	// C.InitLigraGraph(
+	// 	(*C.int)(unsafe.Pointer(&offs[0])), C.int(len(offs)),
+	// 	(*C.int)(unsafe.Pointer(&edges[0])), C.int(len(edges)),
+	// 	(*C.int)(unsafe.Pointer(&offsGT[0])), C.int(len(offsGT)),
+	// 	(*C.int)(unsafe.Pointer(&edgesGT[0])), C.int(len(edgesGT)),
+	// )
+	
+	// 2) allocate C-backed arrays
+	offsC  := make([]C.int, len(offsGo))
+	edgesC := make([]C.int, len(edgesGo))
+	for i, v := range offsGo  { offsC[i]  = C.int(v) }
+	for i, v := range edgesGo { edgesC[i] = C.int(v) }
+
+	// same for the transpose
+	offsGTC  := make([]C.int, len(offsGT))
+	edgesGTC := make([]C.int, len(edgesGT))
+	for i, v := range offsGT  { offsGTC[i]  = C.int(v) }
+	for i, v := range edgesGT { edgesGTC[i] = C.int(v) }
+
+	// 3) now call safely
 	C.InitLigraGraph(
-		(*C.int)(unsafe.Pointer(&offs[0])), C.int(len(offs)),
-		(*C.int)(unsafe.Pointer(&edges[0])), C.int(len(edges)),
-		(*C.int)(unsafe.Pointer(&offsGT[0])), C.int(len(offsGT)),
-		(*C.int)(unsafe.Pointer(&edgesGT[0])), C.int(len(edgesGT)),
+	(*C.int)(unsafe.Pointer(&offsC[0])),  C.int(len(offsC)),
+	(*C.int)(unsafe.Pointer(&edgesC[0])), C.int(len(edgesC)),
+	(*C.int)(unsafe.Pointer(&offsGTC[0])), C.int(len(offsGTC)),
+	(*C.int)(unsafe.Pointer(&edgesGTC[0])),C.int(len(edgesGTC)),
 	)
 	// ensure we free at the end
 	defer C.FreeLigraGraph()
