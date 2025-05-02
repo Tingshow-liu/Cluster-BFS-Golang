@@ -1,21 +1,40 @@
 package main
 
+/*
+#cgo CXXFLAGS: -std=c++17
+#cgo CXXFLAGS: -I${SRCDIR}/cwrapper
+#cgo CXXFLAGS: -I${SRCDIR}/vendor/ligra
+#cgo CXXFLAGS: -I${SRCDIR}/vendor/parlay
+#cgo CXXFLAGS: -I${SRCDIR}/vendor/src
+#cgo CXXFLAGS: -Wno-integer-overflow
+#cgo CXXFLAGS: -Wno-shift-count-overflow
+#cgo LDFLAGS: -lm
+
+#cgo LDFLAGS: -lstdc++ cwrapper/wrapper.o
+
+#include "cwrapper/wrapper.h"
+*/
+import "C" // To apply C++ Ligra code to Go for verification
+
 import (
-	"cluster_bfs_go/bitutils" // go.mod is in "module cluster_bfs_go"
+	"cluster_bfs_go/bitutils"
+	"cluster_bfs_go/graphutils"
+	"fmt"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // Member attributes of ClusterBFS
 type ClusterBFS struct {
-	G         [][]int // The original graph
-	GT        [][]int // The transpose of the graph
+	G         [][]int // Input
+	GT        [][]int // Input
 	S0        []uint64
 	S1        []uint64
-	D         []uint64
-	S         [][]uint64
+	D         []uint64   // Output
+	S         [][]uint64 // Output
 	Distances []uint64
-	R         int // TBD
+	R         int // Input
 	INF       uint64
 	round     uint64
 }
@@ -63,6 +82,7 @@ func (cbfs *ClusterBFS) Init(vertices []int) []int {
 }
 
 // EdgeFunc: A bit-level parallel function, run by many threads (thread-level parallelism)
+// EdgeFunc and CondFunc work together to let ligra know whether the current vertex can become one of the frontiers for the next level
 func (cbfs *ClusterBFS) EdgeFunc(u, v int) bool {
 	success := false
 	// u tries to tell v what seeds visited u, so v can be reached by these seeds that visited u
@@ -89,7 +109,7 @@ func (cbfs *ClusterBFS) FrontierFunc(v int) {
 	// S1[v] = all seeds that tried to reach v in this round
 	// S0[v] = all seeds that had already reached v before this round
 	// So difference = new seeds that just reached v this round
-	difference := cbfs.S1[v] &^ cbfs.S0[v] // AND NOT
+	difference := cbfs.S1[v] &^ cbfs.S0[v] // AND NOT (Guard)
 
 	// If this is the first time v has been visited, set its BFS round (D[v])
 	if cbfs.D[v] == cbfs.INF {
@@ -107,13 +127,13 @@ func (cbfs *ClusterBFS) FrontierFunc(v int) {
 // CondFunc: decides which vertices should be considered for updates in the current BFS round
 // Returns true if:
 // Vertices that haven’t been visited yet (D[v] == INF)
-// Or were recently visited and cbfs.round-cbfs.D[v] is still within the radius R from previous seeds
+// Or were recently visited and cbfs.round-cbfs.D[v] is still within R from previous seeds
 func (cbfs *ClusterBFS) CondFunc(v int, round uint64) bool {
 	return cbfs.D[v] == cbfs.INF || (cbfs.round-cbfs.D[v]) < uint64(cbfs.R) // atomic version: dv := atomic.LoadUint64(&D[v])
 }
 
 // Test BFS within a single cluster
-func (cbfs *ClusterBFS) RunBFS(seeds []int) {
+func (cbfs *ClusterBFS) RunCBFS(seeds []int) {
 	// Initializes the initial frontiers of the BFS (cluster) from seeds
 	frontier := NewEmptySparse()
 	frontier.AddVertices(seeds)
@@ -137,12 +157,114 @@ func (cbfs *ClusterBFS) RunBFS(seeds []int) {
 	)
 
 	total := 0
-	// Inner loop for BFS within a single cluster.
+	// Inner loop for BFS within the current frontiers
 	for frontier.Size() > 0 {
-		frontier.Apply(cbfs.FrontierFunc)
+		frontier.Apply(cbfs.FrontierFunc) // Update our output
 		cbfs.round++
 		m := frontier.Size()
 		total += m
-		frontier = frontierMap.Run(frontier, false)
+		frontier = frontierMap.Run(frontier, false) // Update the next level frontiers
 	}
+}
+
+// VerifyCBFS: mimics the C++ verify_CBFS logic, using Ligra’s BFS via cgo
+// seeds: the list of seed vertices (cbfs.Init returned these).
+func (cbfs *ClusterBFS) VerifyCBFS(seeds []int) error {
+	n := len(cbfs.G)
+	if len(seeds) == 0 {
+		return fmt.Errorf("no seeds provided")
+	}
+
+	// 1) Flatten G and GT into CSR form
+	offsGo, edgesGo := graphutils.FlattenCSR(cbfs.G)
+	offsGT, edgesGT := graphutils.FlattenCSR(cbfs.GT)
+
+	// 2) allocate C-backed arrays
+	offsC := make([]C.int, len(offsGo))
+	edgesC := make([]C.int, len(edgesGo))
+	for i, v := range offsGo {
+		offsC[i] = C.int(v)
+	}
+	for i, v := range edgesGo {
+		edgesC[i] = C.int(v)
+	}
+
+	// same for the transpose
+	offsGTC := make([]C.int, len(offsGT))
+	edgesGTC := make([]C.int, len(edgesGT))
+	for i, v := range offsGT {
+		offsGTC[i] = C.int(v)
+	}
+	for i, v := range edgesGT {
+		edgesGTC[i] = C.int(v)
+	}
+
+	// 3) now call safely
+	C.InitLigraGraph(
+		(*C.int)(unsafe.Pointer(&offsC[0])), C.int(len(offsC)),
+		(*C.int)(unsafe.Pointer(&edgesC[0])), C.int(len(edgesC)),
+		(*C.int)(unsafe.Pointer(&offsGTC[0])), C.int(len(offsGTC)),
+		(*C.int)(unsafe.Pointer(&edgesGTC[0])), C.int(len(edgesGTC)),
+	)
+	// Make sure to free memory at the end
+	defer C.FreeLigraGraph()
+
+	// Align Ligra's (C++) INF (2^31 - 1) with Go's INF (2^64 - 1)
+	const ligraInf32 = (1 << 31) - 1
+	R := cbfs.R
+
+	// 3) For each seed, run Ligra BFS and compare
+	for j, seed := range seeds {
+		// stop if we cycle back to first seed
+		if j != 0 && seed == seeds[0] {
+			break
+		}
+
+		// prepare output buffer
+		answer := make([]uint64, n)
+		// call into C++ (no per-seed rebuild of G/GT)
+		C.RunLigraBFS_CSR(
+			C.int(seed),
+			(*C.ulong)(unsafe.Pointer(&answer[0])),
+		)
+
+		// compare Ligra’s distances (answer) vs. your bit-parallel result
+		for v := 0; v < n; v++ {
+			dTrue := answer[v]
+			dQuery := cbfs.D[v]
+			if dTrue == ligraInf32 {
+				// unreachable in true BFS, skip
+				continue
+			}
+			// reconstruct the extra rounds from cbfs.S[v]
+			var sum uint64
+			changed := false
+			for r := 0; r < R; r++ {
+				sum |= cbfs.S[v][r]
+				if sum&(1<<uint(j)) != 0 {
+					dQuery += uint64(r)
+					changed = true
+					break
+				}
+			}
+			// mismatch checks
+			if changed {
+				if dQuery != dTrue {
+					return fmt.Errorf(
+						"seed %d, vertex %d: true=%d, ours=%d",
+						seed, v, dTrue, dQuery,
+					)
+				}
+			} else {
+				// allow up to ((R+1)/2)*2 slack
+				if dTrue-dQuery > uint64((R+1)/2)*2 {
+					return fmt.Errorf(
+						"seed %d, vertex %d out of range: true=%d, ours=%d",
+						seed, v, dTrue, dQuery,
+					)
+				}
+			}
+		}
+	}
+	return nil
 }

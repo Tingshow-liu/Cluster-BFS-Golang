@@ -28,7 +28,7 @@ func SelectSeeds1(G [][]int, seeds [][]int) {
 	}
 
 	r := 0 // how many batches we’ve filled
-	// 4–7) build each batch
+	// build each batch
 	for _, v := range verts {
 		seeds[r][0] = v
 		ns := 1 // next free slot index
@@ -65,7 +65,7 @@ func SelectSeeds1(G [][]int, seeds [][]int) {
 
 /* TBD */
 // Two-hop star
-func selectSeeds2(G [][]int, seeds [][]int) {
+func SelectSeeds2(G [][]int, seeds [][]int) {
 	n := len(G)
 	setSize := len(seeds[0])
 	// 1) random permutation of all vertices
@@ -132,7 +132,7 @@ func selectSeeds2(G [][]int, seeds [][]int) {
 }
 
 // Three-hop star
-func selectSeeds3(G [][]int, seeds [][]int) {
+func SelectSeeds3(G [][]int, seeds [][]int) {
 	n := len(G)
 	setSize := len(seeds[0])
 	ord := rand.Perm(n)
