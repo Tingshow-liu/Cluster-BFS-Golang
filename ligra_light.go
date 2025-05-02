@@ -386,50 +386,50 @@ func countTrue(b []bool) int {
 // It decides whether to use the sparse or dense method based on the size
 // of the input vertex subset and then returns a new VertexSubset as result.
 func (em *EdgeMap[E]) Run(vs VertexSubset, exitEarly bool) VertexSubset {
-	// parallel count of active vertices
-	var activeCount int
-	if vs.isSparse {
-		activeCount = len(vs.sparse)
-	} else {
-		activeCount = countTrue(vs.dense)
-	}
+	  // parallel count of active vertices
+    var activeCount int
+    if vs.isSparse {
+        activeCount = len(vs.sparse)
+    } else {
+        activeCount = countTrue(vs.dense)
+    }
 
-	if vs.isSparse {
-		// parallel compute incident edges count
-		var wg sync.WaitGroup
-		ch := make(chan int, len(vs.sparse))
-		for _, v := range vs.sparse {
-			wg.Add(1)
-			go func(v int) {
-				defer wg.Done()
-				ch <- len(em.G[v])
-			}(v)
-		}
-		go func() {
-			wg.Wait()
-			close(ch)
-		}()
-		d := 0
-		for cnt := range ch {
-			d += cnt
-		}
-		if (activeCount + d) > int(em.m/10) {
-			dVertices := make([]bool, em.n)
-			for _, i := range vs.sparse {
-				dVertices[i] = true
-			}
-			newDense := em.edgeMapDense(dVertices, exitEarly)
-			return NewDense(newDense)
-		}
-		newSparse := em.edgeMapSparse(vs.sparse)
-		return NewSparse(newSparse)
-	} else {
-		if activeCount > em.n/20 {
-			newDense := em.edgeMapDense(vs.dense, exitEarly)
-			return NewDense(newDense)
-		}
-		seq := vs.ToSeq()
-		newSparse := em.edgeMapSparse(seq)
-		return NewSparse(newSparse)
-	}
+    if vs.isSparse {
+        // parallel compute incident edges count
+        var wg sync.WaitGroup
+        ch := make(chan int, len(vs.sparse))
+        for _, v := range vs.sparse {
+            wg.Add(1)
+            go func(v int) {
+                defer wg.Done()
+                ch <- len(em.G[v])
+            }(v)
+        }
+        go func() {
+            wg.Wait()
+            close(ch)
+        }()
+        d := 0
+        for cnt := range ch {
+            d += cnt
+        }
+        if (activeCount + d) > int(em.m/10) {
+            dVertices := make([]bool, em.n)
+            for _, i := range vs.sparse {
+                dVertices[i] = true
+            }
+            newDense := em.edgeMapDense(dVertices, exitEarly)
+            return NewDense(newDense)
+        }
+        newSparse := em.edgeMapSparse(vs.sparse)
+        return NewSparse(newSparse)
+    } else {
+        if activeCount > em.n/20 {
+            newDense := em.edgeMapDense(vs.dense, exitEarly)
+            return NewDense(newDense)
+        }
+        seq := vs.ToSeq()
+        newSparse := em.edgeMapSparse(seq)
+        return NewSparse(newSparse)
+    }
 }
