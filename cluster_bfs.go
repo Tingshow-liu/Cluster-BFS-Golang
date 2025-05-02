@@ -82,6 +82,7 @@ func (cbfs *ClusterBFS) Init(vertices []int) []int {
 }
 
 // EdgeFunc: A bit-level parallel function, run by many threads (thread-level parallelism)
+// EdgeFunc and CondFunc work together to let ligra know whether the current vertex can become one of the frontiers for the next level
 func (cbfs *ClusterBFS) EdgeFunc(u, v int) bool {
 	success := false
 	// u tries to tell v what seeds visited u, so v can be reached by these seeds that visited u
@@ -108,7 +109,7 @@ func (cbfs *ClusterBFS) FrontierFunc(v int) {
 	// S1[v] = all seeds that tried to reach v in this round
 	// S0[v] = all seeds that had already reached v before this round
 	// So difference = new seeds that just reached v this round
-	difference := cbfs.S1[v] &^ cbfs.S0[v] // AND NOT
+	difference := cbfs.S1[v] &^ cbfs.S0[v] // AND NOT (Guard)
 
 	// If this is the first time v has been visited, set its BFS round (D[v])
 	if cbfs.D[v] == cbfs.INF {
@@ -126,7 +127,7 @@ func (cbfs *ClusterBFS) FrontierFunc(v int) {
 // CondFunc: decides which vertices should be considered for updates in the current BFS round
 // Returns true if:
 // Vertices that haven’t been visited yet (D[v] == INF)
-// Or were recently visited and cbfs.round-cbfs.D[v] is still within the radius R from previous seeds
+// Or were recently visited and cbfs.round-cbfs.D[v] is still within R from previous seeds
 func (cbfs *ClusterBFS) CondFunc(v int, round uint64) bool {
 	return cbfs.D[v] == cbfs.INF || (cbfs.round-cbfs.D[v]) < uint64(cbfs.R) // atomic version: dv := atomic.LoadUint64(&D[v])
 }
@@ -156,13 +157,13 @@ func (cbfs *ClusterBFS) RunCBFS(seeds []int) {
 	)
 
 	total := 0
-	// Inner loop for BFS within a single cluster.
+	// Inner loop for BFS within the current frontiers
 	for frontier.Size() > 0 {
-		frontier.Apply(cbfs.FrontierFunc)
+		frontier.Apply(cbfs.FrontierFunc) // Update our output
 		cbfs.round++
 		m := frontier.Size()
 		total += m
-		frontier = frontierMap.Run(frontier, false)
+		frontier = frontierMap.Run(frontier, false) // Update the next level frontiers
 	}
 }
 
