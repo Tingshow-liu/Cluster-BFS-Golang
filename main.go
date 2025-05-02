@@ -69,7 +69,7 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int, se
 					cbfs.VerifyCBFS(batch)
 				}
 			}
-			fmt.Printf("%d iteration done/n", i)
+			fmt.Printf("%d iteration done\n", i)
 		}
 	}
 	elapsed := time.Since(start)
