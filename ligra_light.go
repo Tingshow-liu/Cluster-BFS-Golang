@@ -95,8 +95,6 @@ func (vs *VertexSubset) ToSeq() []int {
 }
 
 // Apply applies a function f to every vertex in the subset.
-// For the sparse representation, it spawns a goroutine per vertex.
-// For the dense representation, it iterates over the boolean slice.
 func (vs *VertexSubset) Apply(f func(int)) {
 	var wg sync.WaitGroup
 	if vs.isSparse {
