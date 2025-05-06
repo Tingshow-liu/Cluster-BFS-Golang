@@ -16,7 +16,7 @@ g++ -std=c++17 \
     -o cwrapper/wrapper.o
 ```
 
-### Compile to GO executable
+### Compile to Go executable
 ```
 go build
 ```
