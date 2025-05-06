@@ -21,16 +21,7 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int, se
 	firstBatch := seeds[0]
 	// Sequential BFS
 	if seq {
-		Dseq, _ := SequentialBFS(G, firstBatch)
-		// DEBUG (TBD)
-		reached := 0
-		INF := 1_000_000_000
-		for _, d := range Dseq {
-			if d != INF { // since INF was set to R+1
-				reached++
-			}
-		}
-		fmt.Printf("Sequential BFS reached %d/%d vertices\n", reached, len(Dseq))
+		SequentialBFS(G, firstBatch)
 	} else { // ClusterBFS
 		cbfs := &ClusterBFS{G: G, GT: GT, R: R} // allocate ClusterBFS once
 		goSeeds := cbfs.Init(firstBatch)
@@ -40,16 +31,8 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int, se
 				fmt.Fprintf(os.Stderr, "verification failed: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Println("PASS")
+			fmt.Println("PASS correctness check!")
 		}
-		// DEBUG (TBD)
-		reachedC := 0
-		for _, d := range cbfs.D {
-			if d != cbfs.INF {
-				reachedC++
-			}
-		}
-		fmt.Printf("Cluster BFS reached %d/%d vertices\n", reachedC, len(cbfs.D))
 	}
 
 	// timed runs
@@ -59,6 +42,7 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int, se
 			for _, batch := range seeds {
 				SequentialBFS(G, batch)
 			}
+			fmt.Printf("%d iteration done\n", i+1)
 		}
 	} else {
 		cbfs := &ClusterBFS{G: G, GT: GT, R: R} // allocate ClusterBFS
@@ -66,9 +50,6 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int, se
 			for _, batch := range seeds {
 				goSeeds := cbfs.Init(batch)
 				cbfs.RunCBFS(goSeeds)
-				if verify {
-					cbfs.VerifyCBFS(batch)
-				}
 			}
 			fmt.Printf("%d iteration done\n", i+1)
 		}

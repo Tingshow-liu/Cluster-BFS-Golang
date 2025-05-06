@@ -17,12 +17,12 @@ static parlay::sequence<parlay::sequence<int>> build_graph(
     const int* offs, int n_off, const int* edges) {
 
   size_t n = size_t(n_off - 1);
-  // — log how many vertices and the first/last offset index —
-  std::cerr
-  << "[build_graph] n_vertices=" << n
-  << ", offs[0]=" << offs[0]
-  << ", offs[" << n << "]=" << offs[n]
-  << "\n";
+  // // — log how many vertices and the first/last offset index —
+  // std::cerr
+  // << "[build_graph] n_vertices=" << n
+  // << ", offs[0]=" << offs[0]
+  // << ", offs[" << n << "]=" << offs[n]
+  // << "\n";
   parlay::sequence<parlay::sequence<int>> G(n);
   for (size_t i = 0; i < n; i++) {
     int a = offs[i], b = offs[i+1];
@@ -39,13 +39,13 @@ void InitLigraGraph(
     const int* offsGT, int n_offGT,
     const int* edgesGT, int n_edgesGT
 ) {
-  // — log the raw CSR sizes passed from Go —
-  std::cerr
-  << "[InitLigraGraph] G:  n_off=" << n_offG
-  << ", n_edges=" << n_edgesG
-  << "   |   GT: n_off=" << n_offGT
-  << ", n_edges=" << n_edgesGT
-  << "\n";
+  // // — log the raw CSR sizes passed from Go —
+  // std::cerr
+  // << "[InitLigraGraph] G:  n_off=" << n_offG
+  // << ", n_edges=" << n_edgesG
+  // << "   |   GT: n_off=" << n_offGT
+  // << ", n_edges=" << n_edgesGT
+  // << "\n";
   auto G  = build_graph(offsG,  n_offG,  edgesG);
   auto GT = build_graph(offsGT, n_offGT, edgesGT);
   Gptr  = new decltype(G)(std::move(G));
