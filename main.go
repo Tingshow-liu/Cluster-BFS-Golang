@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -69,7 +70,7 @@ func singleBatchTest(seeds [][]int, G, GT [][]int, t int, verify bool, R int, se
 					cbfs.VerifyCBFS(batch)
 				}
 			}
-			fmt.Printf("%d iteration done\n", i + 1)
+			fmt.Printf("%d iteration done\n", i+1)
 		}
 	}
 	elapsed := time.Since(start)
@@ -88,12 +89,14 @@ func main() {
 		r      = flag.Int("r", 2, "BFS radius for verify")
 		verify = flag.Bool("v", false, "verify with Ligra BFS")
 		seq    = flag.Bool("seq", false, "if true, run ClusterBFS; if false, run Sequential BFS")
+		c      = flag.Int("c", 20, "number of CPU cores to use (GOMAXPROCS)")
 	)
 	flag.Parse()
 	if *path == "" {
 		fmt.Fprintln(os.Stderr, "Usage: -f graph.bin [-t #] [-ns #] [-k #] [-r #] [-v] [-par=true|false]")
 		os.Exit(1)
 	}
+	runtime.GOMAXPROCS(*c)
 
 	// Read CSR and construct the graph
 	offs64, edges32, err := graphutils.ReadGraphFromBin(*path)
